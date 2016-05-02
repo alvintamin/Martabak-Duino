@@ -96,14 +96,12 @@ void loop()
     keypin = keypad.getKey();
     if(keypin == '#')
     {
-      Serial.println(keypin);
       memset(readCard,0,sizeof(readCard));
       successRead = 1;
     }
  }  while(successRead != 1);
   if(program) 
   {
-    Serial.println(keypin);
       if(isMaster(readCard)) 
       {
         Serial.println(F("Master Card Scanned"));
@@ -259,11 +257,16 @@ void inputPin()
     {
         key = keypad.getKey();
     }while(!key);
-    pins[i] = key;
     if(key == '#')
     {
       EEPROM.write(449, i);
+      keypadWrite(i);
+      a = 0;
       return;
+    }
+    else
+    {
+      pins[i] = key;
     }
   }
   Serial.println(F("Wrong Input"));
@@ -274,6 +277,7 @@ void keypadWrite(int i)
 {
   for(int j=0; j<i; j++)
   {
+    Serial.println(pins[j]-48);
     EEPROM.write(450+j, pins[j]); 
   }
   Serial.println(F("Pin registered"));
@@ -284,13 +288,16 @@ void keypadWrite(int i)
 boolean checkPin()
 {
   int pinLength = EEPROM.read(449);
-  for(int i=0; i<pinLength; i++){
+  for(int i=0; i<pinLength; i++)
+  {
     if(pins[i] != EEPROM.read(450+i))
     {
+      a = 0;
       return false;
     }
-    return true;
   }
+  a = 0;
+  return true;
 }
 
 void keypadEvent(KeypadEvent key)
@@ -300,10 +307,10 @@ void keypadEvent(KeypadEvent key)
     if(key != '#')
     {
       pins[a] = key;
-            Serial.println(pins[a]);
       a++;
     }
   }
 }
       
+
 
