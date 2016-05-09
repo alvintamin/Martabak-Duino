@@ -288,7 +288,7 @@ void keypadWrite(int i)
 boolean checkPin()
 {
   int pinLength = EEPROM.read(449);
-  for(int i=0; i<pinLength; i++)
+  for(int i=0; i<a; i++)
   {
     if(pins[i] != EEPROM.read(450+i))
     {
