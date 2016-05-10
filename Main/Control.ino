@@ -6,14 +6,28 @@
  * Rudy Nurhadi
  * Tomi
  * 
+ * WIRING GUIDE
+ * 
+ * ---MFRC 522---
+ * 
+ * PIN RST = 5
+ * PIN MISO = 50
+ * PIN MOSI = 51
+ * PIN SCK = 52
+ * PIN SDA = 53
+ * 
+ * ---KEYPAD---
+ * ROW PIN = 5, 4, 3, 2
+ * COLUMN PIN = 8, 7, 6
+ * 
  */
 #include <SPI.h>
 #include <MFRC522.h>
 #include <EEPROM.h>
 #include <Keypad.h>
 
-#define RST_PIN 9
-#define SS_PIN 10
+#define RST_PIN 5
+#define SS_PIN 53
 
 byte masterCard[4];
 byte readCard[4];
@@ -21,7 +35,7 @@ byte storedCard[4];
 
 int pins[10];
 char keypin;
-int a = 0;
+int a = 0; // global variable counter pin
 
 int successRead;
 boolean program = false;
@@ -46,23 +60,12 @@ MFRC522::MIFARE_Key key;
 void setup() 
 {
   Serial.begin(9600);
-  while (!Serial);
   SPI.begin();
   mfrc522.PCD_Init();
-  keypad.addEventListener(keypadEvent);
+  keypad.addEventListener(keypadEvent); // menambahkan interrupt keypad ke system
 
   Serial.println(F("Martabak Duino Safety Box v3.22\n"));
-   /*for(int x = 0; x < EEPROM.length(); x = x + 1)
-     {    
-        if(EEPROM.read(x) == 0) 
-        {              
-        }
-        else 
-        {
-          EEPROM.write(x, 0);       
-        }
-      }*/
-  if(EEPROM.read(1) != 127)
+  if(EEPROM.read(1) != 127) // cek magic value yang apakah ada mastercard pada EEPROM
   {      
     Serial.println(F("Scan A PICC to Define as Master Card"));
       do 
@@ -72,16 +75,21 @@ void setup()
     while(!successRead);                  
     for(int j = 0; j < 4; j++) 
     {       
-      EEPROM.write(2 + j,readCard[j]);
+      EEPROM.write(2 + j,readCard[j]); // menyimpan UID mastercard ke eeprom
     }
-    EEPROM.write(1, 127);      
+    EEPROM.write(1, 127); //set magic value di EEPROM 1 dengan value 127
+    EEPROM.write(449 ,4); // set default jumlah pin untuk safety box dengan pin 1234
+    EEPROM.write(450, 1);
+    EEPROM.write(451, 2);
+    EEPROM.write(452, 3);
+    EEPROM.write(453, 4);      
     Serial.println(F("Master Card Defined"));
   }
   Serial.println(F("-------------------------------------------------"));
   Serial.println(F("Master Card's UID"));
   for(int i = 0; i < 4; i++) 
   {          
-    masterCard[i] = EEPROM.read(2 + i);
+    masterCard[i] = EEPROM.read(2 + i); //membacakan kembali UID mastercard
     Serial.print(masterCard[i], HEX);
   }
   Serial.println("");
@@ -96,13 +104,13 @@ void loop()
     keypin = keypad.getKey();
     if(keypin == '#')
     {
-      memset(readCard,0,sizeof(readCard));
+      memset(readCard,0,sizeof(readCard)); // flush variable readCard
       successRead = 1;
     }
  }  while(successRead != 1);
-  if(program) 
+  if(program) // program mode
   {
-      if(isMaster(readCard)) 
+      if(isMaster(readCard)) // cek apakah kartu tersebut adalah mastercard
       {
         Serial.println(F("Master Card Scanned"));
         Serial.println(F("Exiting Program Mode"));
@@ -110,7 +118,7 @@ void loop()
         memset(readCard,0,sizeof(readCard));
         return;
       }  
-    else if(keypin == '#')
+    else if(keypin == '#') // input # untuk record pin baru
     {
       Serial.println(F("Input your new pin"));
       inputPin();
@@ -119,29 +127,38 @@ void loop()
     }
     else
     {
+      if (findID(readCard)) // RFID ditemukan, menghapus RFID tersebut
+      {
+        Serial.println(F("Removing this card..."));
+        deleteID(readCard);
+      }
+      else // RFID tidak ditemukan, menambahkan RFID tersebut
+      {
+        Serial.println(F("Adding this card..."));
         writeID(readCard);
+      }
     }
   }
   else 
   {
-    if(isMaster(readCard)) 
+    if(isMaster(readCard)) // cek apakah kartu merupakan mastercard
     {
-      program = true;
+      program = true; // set boolean program menjadi true, memasuki program mode
       Serial.println(F("Entered Program Mode"));
-      Serial.println(F("Scan a new RFID Card / enter new pin by pressing '#'"));
+      Serial.println(F("Scan RFID Card / enter new pin by pressing '#'"));
     }
-    else 
+    else
     {
-      if(findID(readCard)) 
+      if(findID(readCard)) // cek kebenaran kartu
       {
         Serial.println(F("Thou shalt pass."));
       }
-      else if(checkPin() == true)
+      else if(checkPin() == true) // cek kebanaran pin
       {
         memset(pins, 0, sizeof(pins));
         Serial.println(F("Thou shalt pass."));
-      }
-      else 
+      } 
+      else // jika tidak ada yang benar 
       {
         Serial.println(F("Thou shalt not pass"));
       }
@@ -149,7 +166,9 @@ void loop()
   }
 }  
 
-int getID() 
+/*-----------------------------------------------------------------------------------*/
+
+int getID() // fungsi untuk membaca UID dari RFID Reader
 {
   if (!mfrc522.PICC_IsNewCardPresent()) 
   {
@@ -170,12 +189,14 @@ int getID()
   return 1;
 }
 
-void writeID(byte a[]) 
+/*-----------------------------------------------------------------------------------*/
+
+void writeID(byte a[]) //fungsi untuk memasukkan RFID baru ke dalam EEPROM
 {
-  if (!findID(a)) 
+  if (!findID(a)) //mencari ID tersebut apakah sudah terdaftar
   {    
-    int num = EEPROM.read(0);     
-    int start = (num*4)+6; 
+    int num = EEPROM.read(0); //membaca jumlah RFID yang sudah terdaftar     
+    int start = (num*4)+6; //menentukan posisi start untuk EEPROM yang belum terisi
     num++;               
     EEPROM.write(0,num);     
     for(int j = 0; j < 4; j++) 
@@ -186,11 +207,45 @@ void writeID(byte a[])
   }
   else 
   {
-  Serial.println(F("Failed! RFID Card already registered"));
+  Serial.println(F("Failed!"));
   }
 }
 
-boolean isMaster(byte test[]) 
+/*-----------------------------------------------------------------------------------*/
+
+void deleteID(byte a[]) // fungsi untuk delete kartu RFID
+{
+  if (!findID(a)) //cek apakah UID tersebut ada di EEPROM
+  {       
+    Serial.println(F("Failed!"));
+  }
+  else 
+  {
+    int num = EEPROM.read(0);   //mengambil jumlah RFID yang terdaftar pada EEPROM
+    int slot;       // variable untuk nantinya ditentukan slot ke berapa
+    int start;     // menentukan dimana start penghapusannya
+    int looping;    // menentukan berapa loop untuk penghapusan
+    int j;
+    slot = findIDSLOT(a);  // mencari slotnya terlebih dahulu
+    start = (slot * 4) + 2; //set variable - variablenya
+    looping = ((num - slot) * 4);
+    num--;      // mengurangi jumlah RFID yang terdaftar pada EEPROM
+    EEPROM.write( 0, num );   // menuliskan jumlah RFID terbaru ke EEPROM
+    for (j = 0; j < looping; j++) 
+    {         
+      EEPROM.write(start + j, EEPROM.read(start + 4 + j)); // menghapus EEPROM yang telah ditentukan sebelumnya
+    }
+    for (int k = 0; k < 4; k++) 
+    {  
+      EEPROM.write(start + j + k, 0);
+    }
+  Serial.println(F("Succesfully removed ID record from EEPROM"));
+  }
+}
+
+/*-----------------------------------------------------------------------------------*/
+
+boolean isMaster(byte test[]) //fungsi untuk mengecek mastercard
 {
   if(checkTwo(test,masterCard))
     return true;
@@ -198,22 +253,42 @@ boolean isMaster(byte test[])
     return false;
 }
 
-void readID(int number) 
+/*-----------------------------------------------------------------------------------*/
+
+int findIDSLOT(byte find[]) 
 {
-  int start = (number*4) + 2;    
-  for(int i = 0; i < 4; i++) 
-  { 
-    storedCard[i] = EEPROM.read(start + i);   
+  int count = EEPROM.read(0);       // Membaca jumlah kartu RFID yang terdaftar pada EEPROM
+  for (int i = 1; i <= count; i++) // melakukan iterasi pencarian kartu
+  {    
+    readID(i);             
+    if (checkTwo(find, storedCard)) // cek apakah kedua UID sesuai
+    {
+      return i;         // return nilai slot 
+      break;         
+    }
   }
 }
 
-boolean findID(byte find[]) 
+/*-----------------------------------------------------------------------------------*/
+
+void readID(int number) // fungsi untuk membaca UID dari EEPROM
 {
-  int count = EEPROM.read(0);      
+  int start = (number*4) + 2;   
+  for(int i = 0; i < 4; i++) 
+  { 
+    storedCard[i] = EEPROM.read(start + i); //membaca 4 byte variable pada EEPROM   
+  }
+}
+
+/*-----------------------------------------------------------------------------------*/
+
+boolean findID(byte find[]) //fungsi untuk mencari UID pada EEPROM
+{
+  int count = EEPROM.read(0); //mengambil jumlah RFID yang terdaftar pada EEPROM      
   for(int i=1; i<=count; i++) 
   {    
-    readID(i);          
-    if(checkTwo(find,storedCard)) 
+    readID(i);  //membaca UID pada EEPROM secara iterasi        
+    if(checkTwo(find,storedCard)) //iterasi untuk cek UID pada variable storedCard dengan EEPROM
     {   
       return true;
       break;  
@@ -225,13 +300,15 @@ boolean findID(byte find[])
   return false;
 }
 
-boolean checkTwo(byte a[],byte b[]) 
+/*-----------------------------------------------------------------------------------*/
+
+boolean checkTwo(byte a[],byte b[]) //fungsi untuk mengecek RFID card yang discan
 {
   if(a[0] != NULL)
   {       
     match = true;       
   }
-  for(int k = 0; k < 4; k++) 
+  for(int k = 0; k < 4; k++)  // mengecek 4 byte UID RFID
   {   
     if(a[k] != b[k])
     {
@@ -248,19 +325,21 @@ boolean checkTwo(byte a[],byte b[])
   }
 }
 
-void inputPin()
+/*-----------------------------------------------------------------------------------*/
+
+void inputPin() // fungsi yang dijalankan ketika ingin memprogram pin
 {
   for(int i=0; i<sizeof(pins); i++)
   {
     char key;
     do
     {
-        key = keypad.getKey();
+        key = keypad.getKey(); // mengambil inputan dari keypad
     }while(!key);
     if(key == '#')
     {
-      EEPROM.write(449, i);
-      keypadWrite(i);
+      EEPROM.write(449, i); //menyimpan jumlah pin tersebut ke EEPROM 449
+      keypadWrite(i); //memanggil fungsi keypadWrite dengan pass variable jumlah pin
       a = 0;
       return;
     }
@@ -273,41 +352,84 @@ void inputPin()
   return;
 }
 
-void keypadWrite(int i)
+/*-----------------------------------------------------------------------------------*/
+
+void keypadWrite(int i) // fungsi untuk menyimpan inputan pin ke EEPROM
 {
   for(int j=0; j<i; j++)
   {
     Serial.println(pins[j]-48);
-    EEPROM.write(450+j, pins[j]); 
+    EEPROM.write(450+j, pins[j]); // pin disimpan mulai dari EEPROM 450 s/d jumlah pin
   }
   Serial.println(F("Pin registered"));
   memset(pins, 0, sizeof(pins));
   return;
 }
 
-boolean checkPin()
+/*-----------------------------------------------------------------------------------*/
+
+boolean checkPin() // fungsi untuk mengecek inputan pin
 {
-  int pinLength = EEPROM.read(449);
-  for(int i=0; i<a; i++)
+  int pinLength = EEPROM.read(449); // membaca jumlah pin yang telah di set pada EEPROM
+  if(pinLength != a) // membandingkan jumlah pin pada EEPROM dengan yang dipencet user
   {
-    if(pins[i] != EEPROM.read(450+i))
-    {
-      a = 0;
-      return false;
-    }
+    a = 0;
+    return false;
   }
-  a = 0;
-  return true;
+  if (a > 0)
+  {
+    for(int i=0; i<a; i++)
+    {
+      if(pins[i] != EEPROM.read(450+i)) // apabila ada 1 yang tidak sama, berarti pin salah
+      {
+        a = 0;
+        return false;
+      }
+    }
+    a = 0;
+    return true;
+  }
+  else // counter pin bernilai < 0, maka pin salah
+  {
+    return false;
+  }
+ 
 }
 
-void keypadEvent(KeypadEvent key)
+/*-----------------------------------------------------------------------------------*/
+
+void flushEEPROM() //hapus memori EEPROM, dipanggil jika dibutuhkan
+{
+  for(int x = 0; x < EEPROM.length(); x = x + 1)
+  {    
+     if(EEPROM.read(x) == 0) 
+     {              
+     }
+     else 
+     {
+       EEPROM.write(x, 0);       
+     }
+  }
+}
+
+/*-----------------------------------------------------------------------------------*/
+
+void keypadEvent(KeypadEvent key) // interrupt berupa listener event yang diterapkan pada keypad
 {
   if(keypad.getState() == PRESSED)
   {
-    if(key != '#')
+    if(key != '#' && key != '*') // menyimpan setiap input keypad ke dalam array pins
     {
       pins[a] = key;
       a++;
+    }
+    else if(key == '*') // tombol * adalah untuk reset input pin
+    {
+      for(int i = 0; i < 10; i++)
+      {
+        pins[i] = 0;
+      }
+      a = 0;
     }
   }
 }
