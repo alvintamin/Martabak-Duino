@@ -23,6 +23,9 @@
  * --SOLENOID--
  * PIN = A0
  *
+ *---BUZZER---
+ *PIN = 9 
+ *
  */
 #include <SPI.h>
 #include <MFRC522.h>
@@ -31,6 +34,10 @@
 
 #define RST_PIN 5
 #define SS_PIN 53
+#define NOTE_E7 2637
+#define NOTE_C7 2093
+#define NOTE_G7 3136
+#define NOTE_G6 1568
 
 byte masterCard[4];
 byte readCard[4];
@@ -38,6 +45,7 @@ byte storedCard[4];
 
 int pins[10];
 char keypin;
+int song = 0;
 int a = 0; // global variable counter pin
 
 int successRead;
@@ -45,6 +53,14 @@ boolean program = false;
 boolean match = false;
 
 unsigned long solenoidUnlockTime = 0;
+
+int buzzerPin = 10;
+
+// intro mario theme song
+int melody[] = {NOTE_E7, NOTE_E7, 0, NOTE_E7, 0, NOTE_C7, NOTE_E7, 0, NOTE_G7, 0, 0,  0, 0, 0, 0, 0};
+
+// tempo mario song
+int tempo[] = {12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12};
 
 const byte ROWS = 4;
 const byte COLS = 3;
@@ -65,6 +81,8 @@ MFRC522::MIFARE_Key key;
 void setup()
 {
   pinMode(A0, OUTPUT); //solenoid pin
+  pinMode(buzzerPin, OUTPUT); // buzzer pin output
+  sing();
   Serial.begin(9600);
   SPI.begin();
   mfrc522.PCD_Init();
@@ -112,7 +130,7 @@ void loop()
       memset(readCard, 0, sizeof(readCard)); // flush variable readCard
       successRead = 1;
     }
-    if ((millis() - solenoidUnlockTime) > 1000) {
+    if ((millis() - solenoidUnlockTime) > 2000) {
       digitalWrite(A0, LOW);
     }
   } while (successRead != 1);
@@ -120,19 +138,24 @@ void loop()
   {
     if (isMaster(readCard)) // cek apakah kartu tersebut adalah mastercard
     {
+      beep(300);
+      beep(300);
+      beep(300);
+      beep(300);
+      beep(300);
       Serial.println(F("Master Card Scanned"));
       Serial.println(F("Exiting Program Mode"));
       program = false;
       memset(readCard, 0, sizeof(readCard));
       return;
     }
-    else if (keypin == '#') // input # untuk record pin baru
+    /*else if (keypin == '#') // input # untuk record pin baru
     {
       Serial.println(F("Input your new pin"));
       inputPin();
       program = false;
       return;
-    }
+    }*/
     else
     {
       if (findID(readCard)) // RFID ditemukan, menghapus RFID tersebut
@@ -154,6 +177,9 @@ void loop()
       program = true; // set boolean program menjadi true, memasuki program mode
       Serial.println(F("Entered Program Mode"));
       Serial.println(F("Scan RFID Card / enter new pin by pressing '#'"));
+      beep(300);
+      beep(300);
+      beep(300);
     }
     else
     {
@@ -161,6 +187,8 @@ void loop()
       {
         digitalWrite(A0, HIGH);
         solenoidUnlockTime = millis();
+        beep(3000);
+        beep(3000);
         Serial.println(F("Thou shalt pass."));
       }
       else if (checkPin() == true) // cek kebanaran pin
@@ -168,10 +196,13 @@ void loop()
         memset(pins, 0, sizeof(pins));
         digitalWrite(A0, HIGH);
         solenoidUnlockTime = millis();
+        beep(3000);
+        beep(3000);
         Serial.println(F("Thou shalt pass."));
       }
       else // jika tidak ada yang benar
       {
+        beep(3000);
         Serial.println(F("Thou shalt not pass"));
       }
     }
@@ -215,6 +246,8 @@ void writeID(byte a[]) //fungsi untuk memasukkan RFID baru ke dalam EEPROM
     {
       EEPROM.write(start + j, a[j]);
     }
+    beep(3000);
+    beep(3000);
     Serial.println(F("Succesfully added RFID Card"));
   }
   else
@@ -251,6 +284,7 @@ void deleteID(byte a[]) // fungsi untuk delete kartu RFID
     {
       EEPROM.write(start + j + k, 0);
     }
+    beep(1000);
     Serial.println(F("Succesfully removed ID record from EEPROM"));
   }
 }
@@ -341,7 +375,7 @@ boolean checkTwo(byte a[], byte b[]) //fungsi untuk mengecek RFID card yang disc
 
 void inputPin() // fungsi yang dijalankan ketika ingin memprogram pin
 {
-  for (int i = 0; i < sizeof(pins); i++)
+  for (int i = 0; i < sizeof(pins) / sizeof(int); i++)
   {
     char key;
     do
@@ -373,6 +407,7 @@ void keypadWrite(int i) // fungsi untuk menyimpan inputan pin ke EEPROM
     Serial.println(pins[j] - 48);
     EEPROM.write(450 + j, pins[j]); // pin disimpan mulai dari EEPROM 450 s/d jumlah pin
   }
+  beep(2000);
   Serial.println(F("Pin registered"));
   memset(pins, 0, sizeof(pins));
   return;
@@ -426,6 +461,16 @@ void flushEEPROM() //hapus memori EEPROM, dipanggil jika dibutuhkan
 
 /*-----------------------------------------------------------------------------------*/
 
+void beep(unsigned char delayms) // fungsi untuk buzzer beep
+{
+  analogWrite(buzzerPin, 200); // nyalakan buzzer
+  delay(delayms);
+  analogWrite(buzzerPin, 0); // matikan buzzer
+  delay(delayms);
+}
+
+/*-----------------------------------------------------------------------------------*/
+
 void keypadEvent(KeypadEvent key) // interrupt berupa listener event yang diterapkan pada keypad
 {
   if (keypad.getState() == PRESSED)
@@ -434,6 +479,13 @@ void keypadEvent(KeypadEvent key) // interrupt berupa listener event yang ditera
     {
       pins[a] = key;
       a++;
+      buzz(buzzerPin, NOTE_C7, 200);
+    }
+    else if (key == '#' && program == true)
+    {
+      EEPROM.write(449, a);
+      keypadWrite(a);
+      program = false;
     }
     else if (key == '*') // tombol * adalah untuk reset input pin
     {
@@ -441,10 +493,42 @@ void keypadEvent(KeypadEvent key) // interrupt berupa listener event yang ditera
       {
         pins[i] = 0;
       }
+      beep(100);
+      beep(100);
+      beep(100);
       a = 0;
     }
   }
 }
 
+/*-----------------------------------------------------------------------------------*/
+
+void sing() //fungsi untuk start intro song 
+{
+  int size = sizeof(melody) / sizeof(int); // set jumlah iterasi
+  for (int thisNote = 0; thisNote < size; thisNote++) // iterasi
+  {
+     int noteDuration = 1000 / tempo[thisNote]; //set durasi nada
+     buzz(buzzerPin, melody[thisNote], noteDuration); //buzz nada
+     int pauseBetweenNotes = noteDuration * 1.30; //set pause antar nada
+     delay(pauseBetweenNotes);
+     buzz(buzzerPin, 0, noteDuration);
+  }
+}
+
+/*-----------------------------------------------------------------------------------*/
+
+void buzz(int targetPin, long frequency, long length) //fungsi untuk membunyikan suara
+{
+  long delayValue = 1000000 / frequency / 2;
+  long numCycles = frequency * length / 1000; 
+  for (long i = 0; i < numCycles; i++) 
+  { 
+    digitalWrite(targetPin, HIGH);
+    delayMicroseconds(delayValue);
+    digitalWrite(targetPin, LOW);
+    delayMicroseconds(delayValue);
+  } 
+}
 
 
