@@ -24,7 +24,10 @@
  * PIN = A0
  *
  *---BUZZER---
- *PIN = 9 
+ *PIN = 10
+ *
+ *---PIEZO---
+ *PIN = A1
  *
  */
 #include <SPI.h>
@@ -38,7 +41,7 @@
 #define NOTE_C7 2093
 #define NOTE_G7 3136
 #define NOTE_G6 1568
-
+ 
 byte masterCard[4];
 byte readCard[4];
 byte storedCard[4];
@@ -46,21 +49,33 @@ byte storedCard[4];
 int pins[10];
 char keypin;
 int song = 0;
-int a = 0; // global variable counter pin
+int a = 0; // global variable counter pin bit
+int b = 0; // global variable counter pin tries
 
 int successRead;
 boolean program = false;
 boolean match = false;
+boolean rfidRead = false;
 
 unsigned long solenoidUnlockTime = 0;
+int solenoidLock = A0;
 
 int buzzerPin = 10;
+int piezoPin = A1;
 
+int threshold = 400; // batas bawah ketukan dari analog sinyal
 // intro mario theme song
 int melody[] = {NOTE_E7, NOTE_E7, 0, NOTE_E7, 0, NOTE_C7, NOTE_E7, 0, NOTE_G7, 0, 0,  0, 0, 0, 0, 0};
 
 // tempo mario song
 int tempo[] = {12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12};
+
+// knock rahasia yang digunakan untuk reset
+const int maxKnocks = 20;
+byte secretCode[maxKnocks] = {100, 100, 50, 0, 100, 100, 50, 0, 0, 100, 50, 100, 100, 50, 150, 150, 0, 0, 0, 0}; 
+int knockReadings[maxKnocks]; 
+const int knockComplete = 1500;
+const int rejectValue = 25; 
 
 const byte ROWS = 4;
 const byte COLS = 3;
@@ -87,6 +102,7 @@ void setup()
   SPI.begin();
   mfrc522.PCD_Init();
   keypad.addEventListener(keypadEvent); // menambahkan interrupt keypad ke system
+  attachInterrupt(digitalPinToInterrupt(piezoPin), masterReset, CHANGE); // program master reset dalam bentuk interrupt system
 
   Serial.println(F("Martabak Duino Safety Box v3.22\n"));
   if (EEPROM.read(1) != 127) // cek magic value yang apakah ada mastercard pada EEPROM
@@ -101,11 +117,11 @@ void setup()
       EEPROM.write(2 + j, readCard[j]); // menyimpan UID mastercard ke eeprom
     }
     EEPROM.write(1, 127); //set magic value di EEPROM 1 dengan value 127
-    EEPROM.write(449 , 4); // set default jumlah pin untuk safety box dengan pin 1234
-    EEPROM.write(450, 1);
-    EEPROM.write(451, 2);
-    EEPROM.write(452, 3);
-    EEPROM.write(453, 4);
+    EEPROM.write(449, 4); // set default jumlah pin untuk safety box dengan pin 1234
+    EEPROM.write(450, 49);
+    EEPROM.write(451, 50);
+    EEPROM.write(452, 51);
+    EEPROM.write(453, 52);
     Serial.println(F("Master Card Defined"));
   }
   Serial.println(F("-------------------------------------------------"));
@@ -123,15 +139,14 @@ void loop()
 {
   do
   {
-    successRead = getID();
-    keypin = keypad.getKey();
-    if (keypin == '#')
+    if(analogRead(piezoPin) > threshold)
     {
-      memset(readCard, 0, sizeof(readCard)); // flush variable readCard
-      successRead = 1;
+      masterReset();
     }
+    keypad.getKey();
+    successRead = getID();
     if ((millis() - solenoidUnlockTime) > 2000) {
-      digitalWrite(A0, LOW);
+      digitalWrite(solenoidLock, LOW);
     }
   } while (successRead != 1);
   if (program) // program mode
@@ -185,21 +200,21 @@ void loop()
     {
       if (findID(readCard)) // cek kebenaran kartu
       {
-        digitalWrite(A0, HIGH);
-        solenoidUnlockTime = millis();
         beep(3000);
         beep(3000);
-        Serial.println(F("Thou shalt pass."));
+        rfidRead = true;
+        memset(pins, 0, sizeof(pins)/sizeof(int));
+        Serial.println(F("This is the correct RFID. Enter your pin to procced."));
       }
-      else if (checkPin() == true) // cek kebanaran pin
+      /*else if (checkPin() == true) // cek kebanaran pin
       {
-        memset(pins, 0, sizeof(pins));
+        memset(pins, 0, sizeof(pins)/sizeof(int));
         digitalWrite(A0, HIGH);
         solenoidUnlockTime = millis();
         beep(3000);
         beep(3000);
         Serial.println(F("Thou shalt pass."));
-      }
+      }*/
       else // jika tidak ada yang benar
       {
         beep(3000);
@@ -373,33 +388,6 @@ boolean checkTwo(byte a[], byte b[]) //fungsi untuk mengecek RFID card yang disc
 
 /*-----------------------------------------------------------------------------------*/
 
-void inputPin() // fungsi yang dijalankan ketika ingin memprogram pin
-{
-  for (int i = 0; i < sizeof(pins) / sizeof(int); i++)
-  {
-    char key;
-    do
-    {
-      key = keypad.getKey(); // mengambil inputan dari keypad
-    } while (!key);
-    if (key == '#')
-    {
-      EEPROM.write(449, i); //menyimpan jumlah pin tersebut ke EEPROM 449
-      keypadWrite(i); //memanggil fungsi keypadWrite dengan pass variable jumlah pin
-      a = 0;
-      return;
-    }
-    else
-    {
-      pins[i] = key;
-    }
-  }
-  Serial.println(F("Wrong Input"));
-  return;
-}
-
-/*-----------------------------------------------------------------------------------*/
-
 void keypadWrite(int i) // fungsi untuk menyimpan inputan pin ke EEPROM
 {
   for (int j = 0; j < i; j++)
@@ -409,7 +397,7 @@ void keypadWrite(int i) // fungsi untuk menyimpan inputan pin ke EEPROM
   }
   beep(2000);
   Serial.println(F("Pin registered"));
-  memset(pins, 0, sizeof(pins));
+  memset(pins, 0, sizeof(pins)/sizeof(int));
   return;
 }
 
@@ -420,7 +408,10 @@ boolean checkPin() // fungsi untuk mengecek inputan pin
   int pinLength = EEPROM.read(449); // membaca jumlah pin yang telah di set pada EEPROM
   if (pinLength != a) // membandingkan jumlah pin pada EEPROM dengan yang dipencet user
   {
+        Serial.println(a);
     a = 0;
+    Serial.println(F("ASDA"));
+    Serial.println(pinLength);
     return false;
   }
   if (a > 0)
@@ -430,6 +421,8 @@ boolean checkPin() // fungsi untuk mengecek inputan pin
       if (pins[i] != EEPROM.read(450 + i)) // apabila ada 1 yang tidak sama, berarti pin salah
       {
         a = 0;
+        Serial.println(pins[i]);
+        Serial.println(EEPROM.read(450+i));
         return false;
       }
     }
@@ -478,14 +471,43 @@ void keypadEvent(KeypadEvent key) // interrupt berupa listener event yang ditera
     if (key != '#' && key != '*') // menyimpan setiap input keypad ke dalam array pins
     {
       pins[a] = key;
+      Serial.println(pins[a]);
+      Serial.println(a);
       a++;
       buzz(buzzerPin, NOTE_C7, 200);
     }
-    else if (key == '#' && program == true)
+    else if (key == '#' && program == true) // ketika program mode, maka input pin berarti pin baru
     {
       EEPROM.write(449, a);
+      Serial.println(a);
       keypadWrite(a);
       program = false;
+      a = 0;
+    }
+    else if (rfidRead == true && key == '#')
+    {
+      beep(200);
+        if(checkPin() == true)
+        {
+          memset(pins, 0, sizeof(pins)/sizeof(int));
+          digitalWrite(solenoidLock, HIGH);
+          solenoidUnlockTime = millis();
+          beep(3000);
+          beep(3000);
+          rfidRead = false;
+          Serial.println(F("Thou shalt pass."));
+        } 
+        else
+        {
+          if(b > 2)
+          {
+            rfidRead = false;
+            Serial.println(F("Martabak duino safety lox box has been locked due to maximum pin tries exceeeded. \nYou have to scan your rfid again"));
+            b = 0;
+          }
+          b++;
+          Serial.println(F("WRONG PIN"));
+        }
     }
     else if (key == '*') // tombol * adalah untuk reset input pin
     {
@@ -531,4 +553,91 @@ void buzz(int targetPin, long frequency, long length) //fungsi untuk membunyikan
   } 
 }
 
+/*-----------------------------------------------------------------------------------*/
 
+void masterReset() // mengecek knock rahasia guna reset keseluruhan program
+{
+  int i = 0;
+  for (i=0; i < maxKnocks; i++) // reset array ketukan agar data presisi
+  {
+    knockReadings[i] = 0;
+  }
+  
+  int currentKnock = 0;  
+  int startTime = millis(); 
+  int now = millis();   
+
+  do 
+  {                            
+    if(analogRead(piezoPin) >= threshold) // ketika ada ketukan baru, akan dimasukkan ke dalam array selanjutnya
+    {                   
+      now = millis();
+      knockReadings[currentKnock] = now - startTime;
+      currentKnock++;                             
+      startTime = now;          
+    }
+
+    now = millis();
+  } while((now-startTime < knockComplete) && (currentKnock < maxKnocks)); // piezo akan berhenti ketika ketukan telah melebihi batas maks knock atau waktu yang ditentukan
+  
+  if(validateKnock() == true) // knock yang sesuai
+  {
+    flushEEPROM(); //program untuk mereset seluruh data yang tersimpan
+    asm volatile(" jmp 0");
+  } 
+  else // knock tidak sesuai, karena ini bersifat rahasia, maka tidak ada indikator keluaran.
+  {
+  } 
+}
+
+/*-----------------------------------------------------------------------------------*/
+
+boolean validateKnock()
+{
+  int i = 0;
+ 
+  int currentKnock = 0;
+  int secretKnock = 0;
+  int maxKnockInterval = 0; //digunakan untuk normalisasi data waktu antar ketukan
+  
+  for(i = 0; i < maxKnocks; i++)
+  {
+    if(knockReadings[i] > 0) //iterasi ke array knock yang sudah berhasil diinput untuk menghitung jumlah ketukan
+    {
+      currentKnock++;
+    }
+    if(secretCode[i] > 0) //iterasi ke secret knock yang sudah ditentukan untuk mencari banyaknya ketukan
+    {         
+      secretKnock++;
+    }
+    
+    if(knockReadings[i] > maxKnockInterval)
+    {  
+      maxKnockInterval = knockReadings[i];
+    }
+  }
+
+  if(currentKnock != secretKnock) // check apakah jumlah ketukan dari data yang didapat sensor dengan yang disimpan sama atau tidak
+  {  
+    return false;
+  }
+  
+
+  /*  waktu yang didapat melalui sensor merupakan waktu absolute antar ketukan
+   *  waktu absolute ini akan menyebabkan program menjadi sangat sensitif terhadap perbedaan yang sangat kecil 
+   *  yang diinginkan adalah program dapat membaca ritme dari ketukan tersebut
+   */
+  int totaltimeDifferences = 0;
+  int timeDiff = 0;
+  for(i = 0; i < maxKnocks; i++) // iterasi untuk mapping waktu absolute menjadi waktu "semu" tanpa mengurangi kualitas keamanan 
+  {    
+    knockReadings[i]= map(knockReadings[i], 0, maxKnockInterval, 0, 100);      
+    timeDiff = abs(knockReadings[i] - secretCode[i]);
+    if (timeDiff > rejectValue) // penjaga keamanan dari waktu "semu"
+    {
+      return false;
+    }
+    totaltimeDifferences += timeDiff;
+  } 
+  return true;
+}
